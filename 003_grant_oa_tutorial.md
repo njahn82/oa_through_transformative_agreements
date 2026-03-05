@@ -518,3 +518,25 @@ oa_by_year_and_type |>
 <img
 src="003_grant_oa_tutorial_files/figure-commonmark/oa_by_year_type_abs-1.png"
 width="2400" />
+
+Key figures 2024
+
+NIH
+
+- 93.7% of grant-supported biomedical research articles were open access
+  (84155 out of 89770 original research articles and reviews indexed in
+  PubMed and OpenAlex).
+
+- 51.2% of open access articles were enabled through APCs, and 5.3%
+  through transformative agreements. 40.5 was exclusively open access
+  through other means, particularly through PubMed Central.
+
+European Commission
+
+- 94.8% of grant-supported biomedical research articles were open access
+  (25559 out of 26952 original research articles and reviews indexed in
+  PubMed and OpenAlex).
+
+- 51.4% of open access articles were enabled through APCs, and 33.7%
+  through transformative agreements. 12% was exclusively open access
+  through other means.

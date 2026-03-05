@@ -501,4 +501,23 @@ oa_by_year_and_type |>
 
 ```
 
-  
+Key figures 2024
+
+```{r, echo=FALSE}
+library(tidyverse)
+options(scipen = 999, digits = 1)
+knitr::opts_chunk$set(format.args = list(big.mark = ",", digits = 2))
+
+```
+
+NIH
+
+- `r oa_by_year_and_type |> filter(funders == "NIH", publication_year == 2024) |> pull(oa_prop) |> sum() *100`% of grant-supported biomedical research articles were open access (`r oa_by_year_and_type |> filter(funders == "NIH", publication_year == 2024) |> pull(n_oa) |> sum()` out of `r oa_by_year_and_type |> filter(funders == "NIH", publication_year == 2024) |> pull(articles) |> unique()` original research articles and reviews indexed in PubMed and OpenAlex).
+
+- `r oa_by_year_and_type |> filter(funders == "NIH", publication_year == 2024, oa_cat == "APC") |> pull(n_oa) / oa_by_year_and_type |> filter(funders == "NIH", publication_year == 2024) |> pull(n_oa) |> sum()* 100`% of open access articles were enabled through APCs, and `r oa_by_year_and_type |> filter(funders == "NIH", publication_year == 2024, oa_cat == "Transformative Agreement") |> pull(n_oa) / oa_by_year_and_type |> filter(funders == "NIH", publication_year == 2024) |> pull(n_oa) |> sum() * 100`% through transformative agreements. `r  oa_by_year_and_type |> filter(funders == "NIH", publication_year == 2024, oa_cat == "Other") |> pull(n_oa) / oa_by_year_and_type |> filter(funders == "NIH", publication_year == 2024) |> pull(n_oa) |> sum() * 100` was exclusively open access through other means, particularly through PubMed Central.
+
+European Commission
+
+- `r oa_by_year_and_type |> filter(funders == "European Commission", publication_year == 2024) |> pull(oa_prop) |> sum() *100`% of grant-supported biomedical research articles were open access (`r oa_by_year_and_type |> filter(funders == "European Commission", publication_year == 2024) |> pull(n_oa) |> sum()` out of `r oa_by_year_and_type |> filter(funders == "European Commission", publication_year == 2024) |> pull(articles) |> unique()` original research articles and reviews indexed in PubMed and OpenAlex).
+
+- `r oa_by_year_and_type |> filter(funders == "European Commission", publication_year == 2024, oa_cat == "APC") |> pull(n_oa) / oa_by_year_and_type |> filter(funders == "European Commission", publication_year == 2024) |> pull(n_oa) |> sum()* 100`% of open access articles were enabled through APCs, and `r oa_by_year_and_type |> filter(funders == "European Commission", publication_year == 2024, oa_cat == "Transformative Agreement") |> pull(n_oa) / oa_by_year_and_type |> filter(funders == "European Commission", publication_year == 2024) |> pull(n_oa) |> sum() * 100`% through transformative agreements. `r  oa_by_year_and_type |> filter(funders == "European Commission", publication_year == 2024, oa_cat == "Other") |> pull(n_oa) / oa_by_year_and_type |> filter(funders == "European Commission", publication_year == 2024) |> pull(n_oa) |> sum() * 100`% was exclusively open access through other means.
