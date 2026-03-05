@@ -9,6 +9,38 @@ execute:
   cache: true
 ---
 
+```{r}
+#| echo: false
+# Custom theme inspired by Our World in Data)
+library(ggplot2)
+my_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      # Remove all grid lines except horizontal major
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.major.y = element_line(color = "grey85", linewidth = 0.3),
+      # Clean axis styling
+      axis.line.x = element_line(color = "grey40", linewidth = 0.4),
+      axis.ticks.x = element_line(color = "grey40", linewidth = 0.3),
+      axis.ticks.length.x = unit(0.15, "cm"),
+      axis.ticks.y = element_blank(),
+      # Typography
+      axis.text = element_text(color = "grey30", size = rel(0.9)),
+      axis.title.y = element_text(color = "grey30", size = rel(0.95), margin = margin(r = 10)),
+      plot.title = element_text(face = "bold", size = rel(1.1), color = "grey10", margin = margin(b = 8)),
+      plot.title.position = "plot",
+      plot.caption = element_text(hjust = 1, size = rel(0.7), color = "grey50", margin = margin(t = 12)),
+      plot.caption.position = "plot",
+      # Legend
+      legend.position = "top",
+      # Margins
+      plot.margin = margin(10, 10, 10, 10)
+    )
+}
+```
+
 ## Aim
 
 The aim of this notebook is to demonstrate how to create a crosswalk of different Google BigQuery datasets that can be discovered through ORION-DBs. 
@@ -21,7 +53,7 @@ In this notebook, we use the following sources to create a unified dataset on op
 
 The data sources to be cross-walked are:
 
-
+- **PubMed**: We use PubMed to retrieve NIH grant-supported publications and as an idication for biomedical literature. 
 - **Open access evidence**: OpenAlex provides article- and journal-level open access information. We use the February 2026 OpenAlex snapshot provided by SUB Göttingen.
 - **Publisher metadata**: Crossref is used for publisher disambiguation, as it provides more coherent publisher names without imprints compared to OpenAlex.
 - **Document classification**: A document classification dataset provided by SUB Göttingen is used to restrict the sample to original research articles.
@@ -40,8 +72,11 @@ For country analysis, we use the first author's country affiliation from OpenAle
 Initially, it is often helpful to start with a subset of publications and select only the columns needed for your analysis. 
 This saves on query costs, keeps the dataset manageable, and safeguards the raw metadata in case an ORION provider updates their data.
 
-The first step is to create a publication dataset enriched with grant funding information from the NIH and the European Commission. 
-Funding data are obtained from the OpenAIRE graph, as provided by Sesame Open Science, and linked to publication metadata from OpenAlex and Crossref.
+The first step is to create a publication dataset enriched with grant funding information from the NIH and the European Commission.
+
+NIH Funding data are retrieved from PubMed. Here, the API is used and a list of PMIDS, a databse identifier, is retrieved and then imported into BigQuery. 
+
+European Commission funding data are obtained from the OpenAIRE graph, as provided by Sesame Open Science, and linked to publication metadata from OpenAlex and Crossref.
 
 The query makes use of temporary tables introduced with `WITH`, also known as Common Table Expressions (CTEs). 
 The first CTE extracts funded publications from OpenAIRE by unnesting the fundings array and filtering for the two funders of interest, then joining to the OpenAIRE publication and relation tables to retrieve the associated DOIs. 
@@ -50,6 +85,7 @@ This is then joined to the main publication dataset.
 In the main query, we select metadata about all articles in the OpenAlex snapshot and apply a number of filters to restrict the dataset to relevant publications. The focus is on original research articles and reviews, using first author affiliations only. Note that in the OpenAlex snapshot used here, the author position field was not exported by OpenAlex, so first authors are identified using the `WITH OFFSET` position. Crossref is used as the source for publisher metadata, as it provides more coherent publisher disambiguation without imprints compared to OpenAlex. The dataset is restricted to publications from 2018 to 2025.
 
 To query BigQuery through our Quarto notebook, we use the R `bigrquery` DBI interface. To connect:
+
 ```{r}
 #| label: setup
 #| message: false
@@ -68,6 +104,21 @@ bq_con <- dbConnect(
 )
 ```
 
+In the first step, we uplaod list of PMIDs to BigUqery, repreentign publicaitons associated with NIH fuinding according to PubMed.
+
+```{r}
+pmids_nih <- read_lines("nih_pmids_2018_2024.txt")
+dbWriteTable(bq_con, # Our BQ connections
+             "subugoe-collaborative.resources.nih_pmids_2018_2024", # Table name
+             tibble::tibble(pmids_nih = pmids_nih), # PMIDs in rectangular format with column name
+             overwrite = TRUE 
+             )
+```
+
+In total, PubMed indexed `r length(unique(pmids_nih))` publications between 2018 and 2024 with NIH grant support.
+
+Next, we bing it toegtehr with OpenAire, adding biomeldcial literature grant-supported by the European Commisison, and OpenAlex and Crossref to obtain schoalrly matedata about these publicaitons.
+
 We save the table in our resource datasets for misc datasets `subugoe-collaborative.resources.oa_tutorial_md_raw`. 
 You will need to define your own dataset.
 
@@ -78,7 +129,7 @@ CREATE OR REPLACE TABLE `subugoe-collaborative.resources.oa_tutorial_md_raw` AS 
 
 WITH openaire_funders AS (
   SELECT DISTINCT
-    pid.value AS doi,
+    pid.value AS pmid,
     fund.name AS funder
   FROM `sos-datasources.openaire.project_20260129` AS proj,
     UNNEST(fundings) AS fund
@@ -87,8 +138,22 @@ WITH openaire_funders AS (
   INNER JOIN `sos-datasources.openaire.publication_20260129` AS pub 
     ON pub_proj.source = pub.id,
     UNNEST(pub.pids) AS pid
-  WHERE fund.name IN ('National Institutes of Health', 'European Commission')
-    AND pid.scheme = 'doi'
+  WHERE fund.name IN ('European Commission')
+    AND pid.scheme = 'pmid'
+),
+
+nih_funders AS (
+  SELECT DISTINCT
+    CAST(pmids_nih AS STRING) AS pmid
+  FROM `subugoe-collaborative.resources.nih_pmids_2018_2024`
+),
+
+all_funders AS (
+  SELECT pmid, 'European Commission' AS funder
+  FROM openaire_funders
+  UNION ALL
+  SELECT pmid, 'NIH' AS funder
+  FROM nih_funders
 )
 
 SELECT DISTINCT
@@ -105,7 +170,7 @@ SELECT DISTINCT
     open_access.oa_status AS oa_status,
     country AS country_code,
     inst.ror,
-    oa.funder AS openaire_funder
+    af.funder AS funders
   FROM `subugoe-collaborative.openalex_walden.works` AS oalex
   LEFT JOIN
     UNNEST(authorships) AS au WITH OFFSET AS pos
@@ -117,8 +182,8 @@ SELECT DISTINCT
     ON oalex.doi = doctype_classifier.doi
   INNER JOIN `subugoe-collaborative.cr_instant.snapshot` AS cr 
     ON LOWER(oalex.doi) = LOWER(cr.doi)
-  LEFT JOIN openaire_funders AS oa 
-    ON LOWER(oalex.doi) = LOWER(oa.doi)
+  LEFT JOIN all_funders AS af
+    ON REGEXP_EXTRACT(oalex.ids.pmid, r'(\d+)$') = af.pmid
   WHERE
       pos = 0
     AND primary_location.source.type = "journal"
@@ -217,6 +282,147 @@ ORDER BY erv.esac_id, md.publication_date
 
 With these two datasets compiled, we are ready to proceed with the open access analysis.
 
-## Data analysis
+### Create analytical dataset: Funder view
+
+```{sql}
+#| connection: "bq_con"
+#| output.var: funding_oa
+WITH
+  oa AS (
+    SELECT
+      publication_year,
+      funders,
+      CASE
+        WHEN (is_in_doaj = TRUE AND oa_status = 'gold') THEN 'gold_is_in_doaj'
+        WHEN (is_in_doaj = TRUE AND oa_status = 'diamond')
+          THEN 'diamond_is_in_doaj'
+        WHEN oa_status = 'hybrid' THEN 'hybrid_oa'
+        WHEN oa_status != 'closed' THEN 'other_oa'
+        END AS oa_type,
+      CASE
+        WHEN jct.doi IS NOT NULL THEN TRUE
+        ELSE FALSE
+        END AS enabled_ta,
+      COUNT(DISTINCT md.doi) AS n_oa_articles
+    FROM `subugoe-collaborative.resources.oa_tutorial_md_raw` AS md
+    LEFT JOIN
+      (
+        SELECT DISTINCT doi
+        FROM `subugoe-closed.apc_science.jct_articles`
+      ) AS jct
+      USING (doi)
+    WHERE funders IS NOT NULL
+    GROUP BY
+      publication_year,
+      funders,
+      oa_type,
+      enabled_ta
+  ),
+  total AS (
+    SELECT
+      publication_year,
+      funders,
+      COUNT(DISTINCT doi) AS articles
+    FROM `subugoe-collaborative.resources.oa_tutorial_md_raw`
+    GROUP BY
+      publication_year,
+      funders
+  )
+SELECT
+  total.publication_year,
+  total.funders,
+  total.articles,
+  oa.n_oa_articles,
+  oa.oa_type,
+  oa.enabled_ta
+FROM total
+LEFT JOIN oa
+  ON
+    total.publication_year = oa.publication_year
+    AND total.funders = oa.funders
+WHERE total.funders IS NOT NULL AND total.publication_year < 2025
+ORDER BY total.publication_year DESC
+```
+
+Her eis the table, which Is tored in an R object `funding_oa`for further local data analysis.
+```{r}
+funding_oa
+```
+
+```{r}
+oa_by_year <- funding_oa |>
+  filter(!is.na(oa_type)) |>
+  summarise(n_oa = sum(n_oa_articles),
+            .by = c(publication_year, funders, articles)
+            ) |>
+  mutate(oa_prop = n_oa / articles)
+```
+
+```{r}
+oa_by_year |>
+  ggplot(aes(publication_year, oa_prop, group = funders, color = funders)) +
+  geom_line() + 
+  geom_point() +
+  scale_y_continuous("Open Access (in%)", labels = scales::percent_format()) +
+  scale_color_manual(NULL,
+    values = c(
+      "NIH" = "#323a45",
+      "European Commission" = "#F8AE21"
+    )) +
+  labs(x = NULL, 
+       title = "Open Access to biomedical research literature",
+       subtitle = "Journal articles and reviews in PubMed",
+       caption = "Data sources: PubMed, OpenAIRE, OpenAlex.") +
+  my_theme()
+```
+
+Open access by open access business model. we distinguish between
+
+APC: gold and hybrid not via TA
+TA: gold and hybrid via TA
+Diamond: diamond
+Other 
+
+```{r}
+oa_by_year_and_type <- funding_oa |>
+  filter(!is.na(oa_type)) |>
+  mutate(oa_cat = case_when(
+    oa_type %in% c("gold_is_in_doaj", "hybrid_oa") & enabled_ta == FALSE ~ "APC",
+    oa_type %in% c("gold_is_in_doaj", "hybrid_oa") & enabled_ta == TRUE ~ "Transformative Agreement",
+    oa_type == "diamond_is_in_doaj" ~ "Diamond OA",
+    .default = "Other")
+) |> summarise(n_oa = sum(n_oa_articles),
+            .by = c(publication_year, funders, articles, oa_cat)
+            ) |>
+  mutate(oa_prop = n_oa / articles,
+             oa_cat = factor(oa_cat, levels = c("APC", "Transformative Agreement", "Diamond OA", "Other")))
+```
 
 
+```{r}
+oa_by_year_and_type
+```
+
+```{r}
+oa_by_year_and_type |>
+  ggplot(aes(publication_year, oa_prop, fill = fct_rev(oa_cat))) +
+  geom_area(color = "black", linewidth = 0.2) +
+  facet_wrap(~funders) +
+  scale_y_continuous("Open Access (in%)", labels = scales::percent_format(), limits = c(0, 1),
+                   expand = c(0, 0)) +
+  scale_fill_manual("OA model",
+    values = c(
+      "APC" = "#0E6BA0",
+      "Transformative Agreement" = "#30C0D2",
+      "Diamond OA" = "#E2A3A4",
+      "Other" = "#AEACA0"
+    )) +
+  labs(x = NULL, 
+       title = "Open Access to grant-supported biomedical research literature",
+       subtitle = "Journal articles and reviews in PubMed",
+       caption = "Data sources: PubMed, OpenAIRE, OpenAlex, cOAlition S Journal Checker Tool.") +
+  my_theme() +
+  guides(fill = guide_legend(reverse = TRUE))
+
+```
+  
