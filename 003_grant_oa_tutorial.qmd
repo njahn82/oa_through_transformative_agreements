@@ -374,11 +374,35 @@ oa_by_year <- funding_oa |>
 ```
 
 ```{r}
+#| dpi: 300
+#| fig-retina: 2
+#| label: oa_by_year_rel
 oa_by_year |>
   ggplot(aes(publication_year, oa_prop, group = funders, color = funders)) +
   geom_line() + 
   geom_point() +
   scale_y_continuous("Open Access (in%)", labels = scales::percent_format()) +
+  scale_color_manual(NULL,
+    values = c(
+      "NIH" = "#323a45",
+      "European Commission" = "#F8AE21"
+    )) +
+  labs(x = NULL, 
+       title = "Open Access to biomedical research literature",
+       subtitle = "Journal articles and reviews in PubMed",
+       caption = "Data sources: PubMed, OpenAIRE, OpenAlex.") +
+  my_theme()
+```
+
+```{r}
+#| dpi: 300
+#| fig-retina: 2
+#| label: oa_by_year_abs
+oa_by_year |>
+  ggplot(aes(publication_year, n_oa, group = funders, color = funders)) +
+  geom_line() + 
+  geom_point() +
+  scale_y_continuous("Open Access", labels = scales::label_number(big.mark = ","), limits = c(0, NA), expand = c(0, 0)) +
   scale_color_manual(NULL,
     values = c(
       "NIH" = "#323a45",
@@ -418,7 +442,13 @@ oa_by_year_and_type <- funding_oa |>
 oa_by_year_and_type
 ```
 
+Relative
+
 ```{r}
+#| fig-width: 8
+#| dpi: 300
+#| fig-retina: 2
+#| label: oa_by_year_type_rel
 oa_by_year_and_type |>
   ggplot(aes(publication_year, oa_prop, fill = fct_rev(oa_cat))) +
   geom_area(color = "black", linewidth = 0.2) +
@@ -440,4 +470,35 @@ oa_by_year_and_type |>
   guides(fill = guide_legend(reverse = TRUE))
 
 ```
+
+Absolute
+
+```{r}
+#| fig-width: 8
+#| dpi: 300
+#| fig-retina: 2
+#| label: oa_by_year_type_abs
+
+oa_by_year_and_type |>
+  ggplot(aes(publication_year, n_oa, fill = fct_rev(oa_cat))) +
+  geom_area(color = "black", linewidth = 0.2) +
+  facet_wrap(~funders) +
+  scale_y_continuous("Open Access", labels = scales::label_number(big.mark = ","), 
+                     limits = c(0, NA), expand = c(0, 0)) +
+  scale_fill_manual("OA model",
+    values = c(
+      "APC" = "#0E6BA0",
+      "Transformative Agreement" = "#30C0D2",
+      "Diamond OA" = "#E2A3A4",
+      "Other" = "#AEACA0"
+    )) +
+  labs(x = NULL, 
+       title = "Open Access to grant-supported biomedical research literature",
+       subtitle = "Journal articles and reviews in PubMed",
+       caption = "Data sources: PubMed, OpenAIRE, OpenAlex, cOAlition S Journal Checker Tool.") +
+  my_theme() +
+  guides(fill = guide_legend(reverse = TRUE))
+
+```
+
   
