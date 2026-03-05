@@ -90,33 +90,8 @@ compared to OpenAlex. The dataset is restricted to publications from
 To query BigQuery through our Quarto notebook, we use the R `bigrquery`
 DBI interface. To connect:
 
-``` r
-library(tidyverse)
-library(bigrquery)
-library(DBI)
-library(countrycode)
-
-# Connect to GBQ with billing project from SUB Göttingen, 
-# You have to use your own :-)
-bq_con <- dbConnect(
-  bigrquery::bigquery(),
-  project = "subugoe-collaborative",
-  dataset = "openalex",
-  billing = "subugoe-collaborative"
-)
-```
-
 In the first step, we uplaod list of PMIDs to BigUqery, repreentign
 publicaitons associated with NIH fuinding according to PubMed.
-
-``` r
-pmids_nih <- read_lines("nih_pmids_2018_2024.txt")
-dbWriteTable(bq_con, # Our BQ connections
-             "subugoe-collaborative.resources.nih_pmids_2018_2024", # Table name
-             tibble::tibble(pmids_nih = pmids_nih), # PMIDs in rectangular format with column name
-             overwrite = TRUE 
-             )
-```
 
 In total, PubMed indexed 824060 publications between 2018 and 2024 with
 NIH grant support.
@@ -129,82 +104,6 @@ We save the table in our resource datasets for misc datasets
 `subugoe-collaborative.resources.oa_tutorial_md_raw`. You will need to
 define your own dataset.
 
-``` sql
-CREATE OR REPLACE TABLE `subugoe-collaborative.resources.oa_tutorial_md_raw` AS (
-
-WITH openaire_funders AS (
-  SELECT DISTINCT
-    pid.value AS pmid,
-    fund.name AS funder
-  FROM `sos-datasources.openaire.project_20260129` AS proj,
-    UNNEST(fundings) AS fund
-  INNER JOIN `sos-datasources.openaire.relation_product_project_20260129` AS pub_proj 
-    ON proj.id = pub_proj.target
-  INNER JOIN `sos-datasources.openaire.publication_20260129` AS pub 
-    ON pub_proj.source = pub.id,
-    UNNEST(pub.pids) AS pid
-  WHERE fund.name IN ('European Commission')
-    AND pid.scheme = 'pmid'
-),
-
-nih_funders AS (
-  SELECT DISTINCT
-    CAST(pmids_nih AS STRING) AS pmid
-  FROM `subugoe-collaborative.resources.nih_pmids_2018_2024`
-),
-
-all_funders AS (
-  SELECT pmid, 'European Commission' AS funder
-  FROM openaire_funders
-  UNION ALL
-  SELECT pmid, 'NIH' AS funder
-  FROM nih_funders
-)
-
-SELECT DISTINCT
-    oalex.id,
-    oalex.doi,
-    oalex.ids.pmid,
-    oalex.ids.pmcid,
-    publication_year,
-    publication_date,
-    primary_location.source.issn_l AS issn_l,
-    oalex.primary_location.source.host_organization_name AS oalex_publisher,
-    cr.publisher AS cr_publisher,
-    primary_location.source.is_in_doaj AS is_in_doaj,
-    open_access.oa_status AS oa_status,
-    country AS country_code,
-    inst.ror,
-    af.funder AS funders
-  FROM `subugoe-collaborative.openalex_walden.works` AS oalex
-  LEFT JOIN
-    UNNEST(authorships) AS au WITH OFFSET AS pos
-  LEFT JOIN
-    UNNEST(au.countries) AS country
-  LEFT JOIN
-    UNNEST(au.institutions) AS inst  
-  LEFT JOIN `subugoe-collaborative.resources.document_classification_september25` AS doctype_classifier 
-    ON oalex.doi = doctype_classifier.doi
-  INNER JOIN `subugoe-collaborative.cr_instant.snapshot` AS cr 
-    ON LOWER(oalex.doi) = LOWER(cr.doi)
-  LEFT JOIN all_funders AS af
-    ON REGEXP_EXTRACT(oalex.ids.pmid, r'(\d+)$') = af.pmid
-  WHERE
-      pos = 0
-    AND primary_location.source.type = "journal"
-    AND is_paratext = FALSE
-    AND oalex.type IN ('article','review')
-    AND is_research IS NOT FALSE
-    AND is_xpac = FALSE
-    AND (
-      NOT REGEXP_CONTAINS(oalex.biblio.issue, '^[a-zA-Z]')
-      OR oalex.biblio.issue IS NULL)
-    AND (
-      NOT REGEXP_CONTAINS(oalex.title, '[0-9]{3} pp.'))
-    AND publication_year BETWEEN 2018 AND 2025
-)
-```
-
 ### 2. Estimate articles from transformative agreements
 
 Next, we will estimate open access articles covered by a transformative
@@ -213,252 +112,53 @@ agreement using a method described in @Jahn_2025
 The following query uses several datasets from the Journal Checker tool,
 provided by SUB Göttingen in the OpenBib collection.
 
-``` sql
-CREATE OR REPLACE TABLE `subugoe-collaborative.resources.oa_tutorial_jct_articles` AS (
-WITH
-  -- Enrich ROR variants from associated institutions
-  obtain_associated_ror_ids AS (
-    SELECT
-      esac_id,
-      jct_inst.ror_id AS ror_jct,
-      inst.ror AS ror_associated
-    FROM
-      `subugoe-collaborative.openbib.jct_institutions` AS jct_inst
-    LEFT JOIN
-      `subugoe-collaborative.openalex.institutions` AS oalex_inst
-    ON
-      jct_inst.ror_id = oalex_inst.ror
-    LEFT JOIN
-      UNNEST(oalex_inst.associated_institutions) AS inst
-  ),
-
-  create_matching_table AS (
-    SELECT esac_id, 'ror_jct' AS ror_type, ror_jct AS ror
-    FROM obtain_associated_ror_ids
-    UNION ALL
-    SELECT esac_id, 'ror_associated' AS ror_type, ror_associated AS ror
-    FROM obtain_associated_ror_ids
-  ),
-
-  enriched_ror_variants AS (
-    SELECT DISTINCT
-      create_matching_table.*,
-      DATE(jct_inst.start_date) AS start_date,
-      DATE(jct_inst.end_date) AS end_date
-    FROM create_matching_table
-    INNER JOIN `subugoe-collaborative.openbib.jct_esac` AS jct_inst
-      ON create_matching_table.esac_id = jct_inst.id
-  ),
-
-  journal_agreements AS (
-    SELECT
-      j.issn_l,
-      e.id AS esac_id
-    FROM `subugoe-collaborative.openbib.jct_journals` AS j
-    INNER JOIN `subugoe-collaborative.openbib.jct_esac` AS e
-      ON j.esac_id = e.id
-  )
-
-SELECT DISTINCT
-  md.id,
-  md.doi,
-  md.issn_l AS matching_issn_l,
-  md.ror AS matching_ror,
-  erv.ror_type,
-  erv.esac_id,
-  erv.start_date,
-  erv.end_date,
-  md.publication_date
-FROM `subugoe-collaborative.resources.oa_tutorial_md_raw` AS md
-INNER JOIN journal_agreements AS ja
-  ON md.issn_l = ja.issn_l
-INNER JOIN enriched_ror_variants AS erv
-  ON md.ror = erv.ror
-  AND ja.esac_id = erv.esac_id
-WHERE
-  md.ror IS NOT NULL
-  AND md.issn_l IS NOT NULL
-  AND (PARSE_DATE('%Y-%m-%d', md.publication_date) >= erv.start_date OR erv.start_date IS NULL)
-  AND (PARSE_DATE('%Y-%m-%d', md.publication_date) <= erv.end_date OR erv.end_date IS NULL)
-  -- Only TA OA articles
-  AND oa_status IN ('gold', 'hybrid')
-ORDER BY erv.esac_id, md.publication_date
-)
-```
-
 With these two datasets compiled, we are ready to proceed with the open
 access analysis.
 
 ### Create analytical dataset: Funder view
 
-``` sql
-WITH
-  oa AS (
-    SELECT
-      publication_year,
-      funders,
-      CASE
-        WHEN (is_in_doaj = TRUE AND oa_status = 'gold') THEN 'gold_is_in_doaj'
-        WHEN (is_in_doaj = TRUE AND oa_status = 'diamond')
-          THEN 'diamond_is_in_doaj'
-        WHEN oa_status = 'hybrid' THEN 'hybrid_oa'
-        WHEN oa_status != 'closed' THEN 'other_oa'
-        END AS oa_type,
-      CASE
-        WHEN jct.doi IS NOT NULL THEN TRUE
-        ELSE FALSE
-        END AS enabled_ta,
-      COUNT(DISTINCT md.doi) AS n_oa_articles
-    FROM `subugoe-collaborative.resources.oa_tutorial_md_raw` AS md
-    LEFT JOIN
-      (
-        SELECT DISTINCT doi
-        FROM `subugoe-closed.apc_science.jct_articles`
-      ) AS jct
-      USING (doi)
-    WHERE funders IS NOT NULL
-    GROUP BY
-      publication_year,
-      funders,
-      oa_type,
-      enabled_ta
-  ),
-  total AS (
-    SELECT
-      publication_year,
-      funders,
-      COUNT(DISTINCT doi) AS articles
-    FROM `subugoe-collaborative.resources.oa_tutorial_md_raw`
-    GROUP BY
-      publication_year,
-      funders
-  )
-SELECT
-  total.publication_year,
-  total.funders,
-  total.articles,
-  oa.n_oa_articles,
-  oa.oa_type,
-  oa.enabled_ta
-FROM total
-LEFT JOIN oa
-  ON
-    total.publication_year = oa.publication_year
-    AND total.funders = oa.funders
-WHERE total.funders IS NOT NULL AND total.publication_year < 2025
-ORDER BY total.publication_year DESC
-```
-
 Her eis the table, which Is tored in an R object `funding_oa`for further
 local data analysis.
 
-``` r
-funding_oa
-```
+    #> # A tibble: 108 × 6
+    #>    publication_year funders            articles n_oa_articles oa_type enabled_ta
+    #>               <int> <chr>                 <int>         <int> <chr>   <lgl>     
+    #>  1             2024 European Commissi…    26952          3036 other_… FALSE     
+    #>  2             2024 European Commissi…    26952          1393 <NA>    FALSE     
+    #>  3             2024 European Commissi…    26952          2117 gold_i… TRUE      
+    #>  4             2024 European Commissi…    26952          9531 gold_i… FALSE     
+    #>  5             2024 European Commissi…    26952          6503 hybrid… TRUE      
+    #>  6             2024 European Commissi…    26952          3610 hybrid… FALSE     
+    #>  7             2024 European Commissi…    26952           740 diamon… FALSE     
+    #>  8             2024 European Commissi…    26952            22 other_… TRUE      
+    #>  9             2024 NIH                   89770         33969 other_… FALSE     
+    #> 10             2024 NIH                   89770          5615 <NA>    FALSE     
+    #> # ℹ 98 more rows
 
-    # A tibble: 108 × 6
-       publication_year funders            articles n_oa_articles oa_type enabled_ta
-                  <int> <chr>                 <int>         <int> <chr>   <lgl>     
-     1             2024 NIH                   89770         33969 other_… FALSE     
-     2             2024 NIH                   89770          5615 <NA>    FALSE     
-     3             2024 NIH                   89770          2493 diamon… FALSE     
-     4             2024 NIH                   89770         30171 gold_i… FALSE     
-     5             2024 NIH                   89770          1218 gold_i… TRUE      
-     6             2024 NIH                   89770         12932 hybrid… FALSE     
-     7             2024 NIH                   89770          3268 hybrid… TRUE      
-     8             2024 NIH                   89770           104 other_… TRUE      
-     9             2024 European Commissi…    26952           740 diamon… FALSE     
-    10             2024 European Commissi…    26952          9531 gold_i… FALSE     
-    # ℹ 98 more rows
-
-``` r
-oa_by_year <- funding_oa |>
-  filter(!is.na(oa_type)) |>
-  summarise(n_oa = sum(n_oa_articles),
-            .by = c(publication_year, funders, articles)
-            ) |>
-  mutate(oa_prop = n_oa / articles)
-```
-
-``` r
-oa_by_year |>
-  ggplot(aes(publication_year, oa_prop, group = funders, color = funders)) +
-  geom_line() + 
-  geom_point() +
-  scale_y_continuous("Open Access (in%)", labels = scales::percent_format()) +
-  scale_color_manual(NULL,
-    values = c(
-      "NIH" = "#323a45",
-      "European Commission" = "#F8AE21"
-    )) +
-  labs(x = NULL, 
-       title = "Open Access to biomedical research literature",
-       subtitle = "Journal articles and reviews in PubMed",
-       caption = "Data sources: PubMed, OpenAIRE, OpenAlex.") +
-  my_theme()
-```
-
-![](003_grant_oa_tutorial_files/figure-commonmark/unnamed-chunk-8-1.png)
+<img
+src="003_grant_oa_tutorial_files/figure-commonmark/unnamed-chunk-8-1.png"
+style="width:99.0%" data-fig-align="center" />
 
 Open access by open access business model. we distinguish between
 
 APC: gold and hybrid not via TA TA: gold and hybrid via TA Diamond:
 diamond Other
 
-``` r
-oa_by_year_and_type <- funding_oa |>
-  filter(!is.na(oa_type)) |>
-  mutate(oa_cat = case_when(
-    oa_type %in% c("gold_is_in_doaj", "hybrid_oa") & enabled_ta == FALSE ~ "APC",
-    oa_type %in% c("gold_is_in_doaj", "hybrid_oa") & enabled_ta == TRUE ~ "Transformative Agreement",
-    oa_type == "diamond_is_in_doaj" ~ "Diamond OA",
-    .default = "Other")
-) |> summarise(n_oa = sum(n_oa_articles),
-            .by = c(publication_year, funders, articles, oa_cat)
-            ) |>
-  mutate(oa_prop = n_oa / articles,
-             oa_cat = factor(oa_cat, levels = c("APC", "Transformative Agreement", "Diamond OA", "Other")))
-```
+    #> # A tibble: 56 × 6
+    #>    publication_year funders             articles oa_cat             n_oa oa_prop
+    #>               <int> <chr>                  <int> <fct>             <int>   <dbl>
+    #>  1             2024 European Commission    26952 Other              3058  0.113 
+    #>  2             2024 European Commission    26952 Transformative A…  8620  0.320 
+    #>  3             2024 European Commission    26952 APC               13141  0.488 
+    #>  4             2024 European Commission    26952 Diamond OA          740  0.0275
+    #>  5             2024 NIH                    89770 Other             34073  0.380 
+    #>  6             2024 NIH                    89770 Diamond OA         2493  0.0278
+    #>  7             2024 NIH                    89770 APC               43103  0.480 
+    #>  8             2024 NIH                    89770 Transformative A…  4486  0.0500
+    #>  9             2023 NIH                    97390 Other             43412  0.446 
+    #> 10             2023 NIH                    97390 APC               42967  0.441 
+    #> # ℹ 46 more rows
 
-``` r
-oa_by_year_and_type
-```
-
-    # A tibble: 56 × 6
-       publication_year funders             articles oa_cat             n_oa oa_prop
-                  <int> <chr>                  <int> <fct>             <int>   <dbl>
-     1             2024 NIH                    89770 Other             34073  0.380 
-     2             2024 NIH                    89770 Diamond OA         2493  0.0278
-     3             2024 NIH                    89770 APC               43103  0.480 
-     4             2024 NIH                    89770 Transformative A…  4486  0.0500
-     5             2024 European Commission    26952 Diamond OA          740  0.0275
-     6             2024 European Commission    26952 APC               13141  0.488 
-     7             2024 European Commission    26952 Transformative A…  8620  0.320 
-     8             2024 European Commission    26952 Other              3058  0.113 
-     9             2023 European Commission    28490 Other              4153  0.146 
-    10             2023 European Commission    28490 Transformative A…  8668  0.304 
-    # ℹ 46 more rows
-
-``` r
-oa_by_year_and_type |>
-  ggplot(aes(publication_year, oa_prop, fill = fct_rev(oa_cat))) +
-  geom_area(color = "black", linewidth = 0.2) +
-  facet_wrap(~funders) +
-  scale_y_continuous("Open Access (in%)", labels = scales::percent_format(), limits = c(0, 1),
-                   expand = c(0, 0)) +
-  scale_fill_manual("OA model",
-    values = c(
-      "APC" = "#0E6BA0",
-      "Transformative Agreement" = "#30C0D2",
-      "Diamond OA" = "#E2A3A4",
-      "Other" = "#AEACA0"
-    )) +
-  labs(x = NULL, 
-       title = "Open Access to grant-supported biomedical research literature",
-       subtitle = "Journal articles and reviews in PubMed",
-       caption = "Data sources: PubMed, OpenAIRE, OpenAlex, cOAlition S Journal Checker Tool.") +
-  my_theme() +
-  guides(fill = guide_legend(reverse = TRUE))
-```
-
-![](003_grant_oa_tutorial_files/figure-commonmark/unnamed-chunk-11-1.png)
+<img
+src="003_grant_oa_tutorial_files/figure-commonmark/unnamed-chunk-11-1.png"
+style="width:99.0%" data-fig-align="center" />
