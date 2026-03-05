@@ -308,7 +308,7 @@ WITH
         WHEN jct.doi IS NOT NULL THEN TRUE
         ELSE FALSE
         END AS enabled_ta,
-      COUNT(DISTINCT md.doi) AS n_oa_articles
+      COUNT(DISTINCT md.pmid) AS n_oa_articles
     FROM `subugoe-collaborative.resources.oa_tutorial_md_raw` AS md
     LEFT JOIN
       (
@@ -327,7 +327,7 @@ WITH
     SELECT
       publication_year,
       funders,
-      COUNT(DISTINCT doi) AS articles
+      COUNT(DISTINCT pmid) AS articles
     FROM `subugoe-collaborative.resources.oa_tutorial_md_raw`
     GROUP BY
       publication_year,
